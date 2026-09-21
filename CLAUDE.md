@@ -14,8 +14,7 @@ desenvolver funcionalidades próprias. Guia do projeto (upstream): @AGENTS.md
   habilitado no login; logs: `journalctl --user -u paperclip -f`). `xmacna/abrir.sh`
   (atalho "Paperclip" da área de trabalho) liga o serviço e abre o navegador.
   O serviço roda `pnpm dev:once` na porta 3100.
-- Estado em `~/.paperclip/instances/default` (postgres embutido na porta 54329),
-  compartilhado com o CLI npm `paperclipai`; rode só um dos dois por vez.
+- Estado em `~/.paperclip/instances/default` (postgres embutido na porta 54329).
 - Requer Node >= 24.11, pnpm 9 via `corepack pnpm`, e Rust (`~/.cargo/bin`) para
   compilar o `paperclip-runnerd`.
 
