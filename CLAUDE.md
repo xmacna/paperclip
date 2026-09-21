@@ -10,8 +10,10 @@ desenvolver funcionalidades próprias. Guia do projeto (upstream): @AGENTS.md
 
 ## Rodar
 
-- `xmacna/abrir.sh` (é o que o atalho "Paperclip" da área de trabalho chama):
-  `pnpm dev:once` na porta 3100 e abre o navegador.
+- Serviço systemd de usuário `paperclip` (`~/.config/systemd/user/paperclip.service`,
+  habilitado no login; logs: `journalctl --user -u paperclip -f`). `xmacna/abrir.sh`
+  (atalho "Paperclip" da área de trabalho) liga o serviço e abre o navegador.
+  O serviço roda `pnpm dev:once` na porta 3100.
 - Estado em `~/.paperclip/instances/default` (postgres embutido na porta 54329),
   compartilhado com o CLI npm `paperclipai`; rode só um dos dois por vez.
 - Requer Node >= 24.11, pnpm 9 via `corepack pnpm`, e Rust (`~/.cargo/bin`) para

@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Abre o Paperclip rodando a partir deste fork: sobe o servidor dev se a porta 3100
-# estiver livre e abre o navegador quando ele responder.
-set -euo pipefail
-REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Abre o Paperclip: liga o serviço systemd de usuário `paperclip` (se estiver parado)
+# e abre o navegador quando o servidor responder. O servidor independe de terminal.
+set -uo pipefail
 URL=http://localhost:3100
-# O dev runner compila o paperclip-runnerd em Rust; ~/.cargo/bin não está no PATH do login.
-export PATH="$HOME/.cargo/bin:$PATH" COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-if curl -fs -o /dev/null "$URL/api/health"; then exec xdg-open "$URL"; fi
-( for _ in $(seq 1 600); do curl -fs -o /dev/null "$URL/api/health" && { xdg-open "$URL"; exit; }; sleep 1; done ) &
-cd "$REPO"
-exec corepack pnpm dev:once
+healthy() { curl -fs -o /dev/null "$URL/api/health"; }
+if ! healthy; then
+  systemctl --user start paperclip.service
+  notify-send -i applications-office Paperclip "Iniciando o servidor…" 2>/dev/null || true
+  for _ in $(seq 1 600); do healthy && break; sleep 1; done
+  healthy || { notify-send -u critical Paperclip "Servidor não subiu; veja: journalctl --user -u paperclip" 2>/dev/null; exit 1; }
+fi
+exec xdg-open "$URL"

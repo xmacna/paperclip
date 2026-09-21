@@ -14,4 +14,4 @@ git merge --no-edit upstream/master
 export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 corepack pnpm install
 git push origin master
-echo "Sync concluído. Reinicie o Paperclip para aplicar (migrations rodam no próximo dev:once)."
+echo "Sync concluído. Rode systemctl --user restart paperclip para aplicar (migrations rodam no próximo dev:once)."
