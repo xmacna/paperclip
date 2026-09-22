@@ -2612,7 +2612,16 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
 
       for (const workspace of candidates) {
         const executionWorkspace = toExecutionWorkspace(workspace);
-        const { git, statusInspectionSucceeded } = await inspectGitCloseReadiness(executionWorkspace);
+        // A workspace with neither a branch nor a base ref (shared_workspace on
+        // the project's primary checkout) can never be assessed as delivered:
+        // merged_by_ancestry needs a baseRef and merged_via_pr needs a branch
+        // that matches the pull request head. Running `git status` on it every
+        // sweep only costs a scan per candidate per tick, with the same
+        // "undelivered" outcome, so hand assessDelivery a null git result instead.
+        const deliverable = Boolean(workspace.baseRef || workspace.branchName);
+        const { git, statusInspectionSucceeded } = deliverable
+          ? await inspectGitCloseReadiness(executionWorkspace)
+          : { git: null, statusInspectionSucceeded: true };
         if (!statusInspectionSucceeded) {
           result.skippedUndelivered += 1;
           continue;
