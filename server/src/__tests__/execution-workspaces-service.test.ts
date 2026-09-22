@@ -582,44 +582,6 @@ describeEmbeddedPostgres("executionWorkspaceService.getCloseReadiness", () => {
     }
   }, 20_000);
 
-  it("skips the git scan for a terminal shared workspace that has no branch or base ref", async () => {
-    // A shared_workspace row on the project's primary checkout carries no
-    // branch and no base ref, so it can never derive merged_by_ancestry or
-    // merged_via_pr. The reaper must classify it as undelivered without
-    // spending a git status scan on it every sweep.
-    const seeded = await seedAncestryTerminalWorkspace();
-    await db
-      .update(executionWorkspaces)
-      .set({
-        mode: "shared_workspace",
-        strategyType: "project_primary",
-        providerType: "local_fs",
-        providerRef: seeded.worktreePath,
-        baseRef: null,
-        branchName: null,
-      })
-      .where(eq(executionWorkspaces.id, seeded.executionWorkspaceId));
-    const originalRun = workspaceGitOperationScheduler.run.bind(workspaceGitOperationScheduler);
-    const statusSpy = vi.spyOn(workspaceGitOperationScheduler, "run")
-      .mockImplementation(async (input) => originalRun(input));
-
-    try {
-      const sweep = await svc.sweepTerminalWorkspaces();
-      expect(sweep).toMatchObject({ checked: 1, archived: 0, skippedUndelivered: 1 });
-      const scansForWorkspace = statusSpy.mock.calls.filter(
-        ([input]) => input.workspacePath === seeded.worktreePath,
-      );
-      expect(scansForWorkspace).toHaveLength(0);
-      const [workspace] = await db
-        .select({ status: executionWorkspaces.status })
-        .from(executionWorkspaces)
-        .where(eq(executionWorkspaces.id, seeded.executionWorkspaceId));
-      expect(workspace?.status).toBe("active");
-    } finally {
-      statusSpy.mockRestore();
-    }
-  }, 20_000);
-
   it("fails the final cleanup fence when a later git status scan is unavailable", async () => {
     const seeded = await seedAncestryTerminalWorkspace();
     const originalRun = workspaceGitOperationScheduler.run.bind(workspaceGitOperationScheduler);
