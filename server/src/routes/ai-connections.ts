@@ -309,7 +309,7 @@ export function aiConnectionRoutes(db: Db, options: Parameters<typeof supportsLo
       }
       const attemptStartedAt = new Date();
       const credential = await readVerifiedLocalAiCredential(input.provider);
-      res.status(201).json(await service.save(companyId, userId, input, credential, undefined, attemptStartedAt));
+      res.status(201).json(await service.save(companyId, userId, input, credential, undefined, attemptStartedAt, { operatorLogin: true }));
     },
   );
   router.put(

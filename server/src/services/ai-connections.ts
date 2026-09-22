@@ -434,9 +434,19 @@ export function aiConnectionService(db: Db) {
     verifiedCredential: string,
     sessionId?: string,
     attemptStartedAt = new Date(),
+    options: { operatorLogin?: boolean } = {},
   ) {
     if (!(await membership(companyId, userId)))
       throw forbidden("An active company member must own this connection");
+    // xmacna: a Claude subscription imported straight from the server
+    // operator's own login (no isolated sign-in) is re-read live before each
+    // run, because the operator's Claude Code rotates that token about every
+    // 8h and the provider revokes the stored snapshot on rotation.
+    const aiOperatorLogin =
+      options.operatorLogin === true &&
+      input.provider === "anthropic" &&
+      input.method === "subscription" &&
+      !sessionId;
     const reconnect = input.connectionId
       ? (await rows(companyId)).find(
           (r) => r.connection.id === input.connectionId,
@@ -625,7 +635,7 @@ export function aiConnectionService(db: Db) {
             status: "active",
             healthStatus: "ok",
             healthMessage: null,
-            config: { ...reconnect.connection.config, aiIsolatedSubscription: input.method === "subscription" && input.provider !== "anthropic" },
+            config: { ...reconnect.connection.config, aiIsolatedSubscription: input.method === "subscription" && input.provider !== "anthropic", aiOperatorLogin },
             updatedAt: new Date(),
           })
           .where(eq(toolConnections.id, id));
@@ -650,6 +660,7 @@ export function aiConnectionService(db: Db) {
               sourceTemplateKey: input.provider,
               ai: { provider: input.provider, method: input.method },
               aiIsolatedSubscription: input.method === "subscription" && input.provider !== "anthropic",
+              aiOperatorLogin,
             },
             createdByUserId: userId,
           });

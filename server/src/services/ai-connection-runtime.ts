@@ -11,6 +11,7 @@ import {
 } from "@paperclipai/shared";
 import { aiConnectionService } from "./ai-connections.js";
 import { secretService } from "./secrets.js";
+import { readClaudeToken } from "@paperclipai/adapter-claude-local/server";
 import { decideCodexAuthMerge } from "@paperclipai/adapter-codex-local/server";
 import type { AdapterExecutionTarget } from "@paperclipai/adapter-utils/execution-target";
 import { runAdapterExecutionTargetProcess } from "@paperclipai/adapter-utils/execution-target";
@@ -194,6 +195,87 @@ export function managedAiSessionFingerprintConfig(
   return { ...config, env };
 }
 
+type ManagedAiSelection = Awaited<
+  ReturnType<ReturnType<typeof aiConnectionService>["select"]>
+>;
+
+/**
+ * xmacna: a Claude subscription imported from the server operator's own login
+ * stores a snapshot of the OAuth access token. Claude Code rotates that token
+ * about every 8 hours and the provider revokes the previous one, so the stored
+ * snapshot dies while the operator's ~/.claude keeps the live copy. Re-read the
+ * live token before each run and rotate the stored secret when it moved. Any
+ * failure keeps the stored value; an expired live file reads as null.
+ */
+export async function refreshOperatorClaudeCredential(
+  db: Db,
+  selection: ManagedAiSelection,
+  stored: string,
+  companyId: string,
+): Promise<string> {
+  if (
+    selection.attribution.provider !== "anthropic" ||
+    selection.attribution.method !== "subscription"
+  )
+    return stored;
+  const config = selection.connection.config as Record<string, unknown> | null;
+  if (config?.aiOperatorLogin !== true) return stored;
+  let live: string | null = null;
+  try {
+    live = await readClaudeToken({ allowKeychain: true });
+  } catch {
+    return stored;
+  }
+  if (!live || live === stored) return stored;
+  try {
+    await db.transaction(async (tx) => {
+      const [grant] = await tx
+        .select()
+        .from(connectionGrants)
+        .where(
+          and(
+            eq(connectionGrants.id, selection.grant.id),
+            eq(connectionGrants.companyId, companyId),
+          ),
+        )
+        .for("update");
+      if (!grant || grant.status !== "active") return;
+      const ref = grant.credentialSecretRefs.find(
+        (r) => r.configPath === "ai.credential",
+      );
+      if (!ref) return;
+      await tx
+        .select({ id: companySecrets.id })
+        .from(companySecrets)
+        .where(
+          and(
+            eq(companySecrets.id, ref.secretId),
+            eq(companySecrets.companyId, companyId),
+          ),
+        )
+        .for("update");
+      // A concurrent run already rotated it: keep that write, use ours locally.
+      const current = await aiConnectionService(tx as unknown as Db).credential({
+        ...selection,
+        grant,
+      });
+      if (current !== stored) return;
+      await secretService(tx).rotate(
+        ref.secretId,
+        { value: live },
+        { userId: grant.subjectUserId },
+      );
+      await tx
+        .update(connectionGrants)
+        .set({ updatedAt: new Date() })
+        .where(eq(connectionGrants.id, grant.id));
+    });
+  } catch {
+    // The run still uses the live token; the next run retries the rotation.
+  }
+  return live;
+}
+
 export async function prepareManagedAiRuntime(
   db: Db,
   input: {
@@ -255,7 +337,12 @@ export async function prepareManagedAiRuntime(
       throw unprocessable(
         "The selected default changed. Retry this execution.",
       );
-    const value = await service.credential(selection);
+    const value = await refreshOperatorClaudeCredential(
+      db,
+      selection,
+      await service.credential(selection),
+      input.companyId,
+    );
     home = await mkdtemp(
       path.join(
         os.tmpdir(),
