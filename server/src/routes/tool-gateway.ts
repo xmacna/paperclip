@@ -218,6 +218,14 @@ async function handleMcpGatewayProtocol(
 export function mcpGatewayProtocolRoutes(toolGateway: ToolGatewayService) {
   const router = Router();
   router.get("/mcp/gateways/:gatewayPublicId", async (req, res) => {
+    // See connection-intents.ts: a GET with `Accept: text/event-stream` is the
+    // MCP SDK probing for a server-initiated stream. 405 tells it there is
+    // none; a 200 JSON body makes it reconnect once per second for the run.
+    const accept = req.headers.accept;
+    if (typeof accept === "string" && accept.toLowerCase().includes("text/event-stream")) {
+      res.status(405).set("Allow", "POST").end();
+      return;
+    }
     res.json({
       transport: "streamable_http",
       endpoint: `/mcp/gateways/${req.params.gatewayPublicId}`,

@@ -59,6 +59,15 @@ export function runtimeConnectionIntentRoutes(db: Db) {
 
   router.get("/mcp/runtime-tools", async (req, res) => {
     await service.validate(runtimeClaims(req));
+    // Streamable HTTP clients open GET with `Accept: text/event-stream` to
+    // listen for server-initiated messages. This endpoint has no such stream;
+    // answering 200 JSON makes the MCP SDK treat the body as an SSE stream that
+    // ended early and reconnect every second for the whole run. 405 is the
+    // spec-defined "no GET stream here" answer and stops the loop.
+    if (acceptsEventStream(req)) {
+      res.status(405).set("Allow", "POST").end();
+      return;
+    }
     res.json({ name: "paperclip-runtime-tools", protocolVersion: "2025-03-26" });
   });
 
@@ -242,4 +251,9 @@ export function connectionIntentBoardRoutes(db: Db, heartbeat: Heartbeat) {
   });
 
   return router;
+}
+
+function acceptsEventStream(req: { headers: Record<string, unknown> }) {
+  const accept = req.headers.accept;
+  return typeof accept === "string" && accept.toLowerCase().includes("text/event-stream");
 }
