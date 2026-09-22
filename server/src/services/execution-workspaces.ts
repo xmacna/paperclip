@@ -90,6 +90,11 @@ function issueTerminalTimestamp(issue: {
 const WORKSPACE_BRANCH_INCOHERENCE_REASON = "git_worktree_branch_incoherence";
 const WORKSPACE_VALIDATION_RECOVERY_CAUSE = "workspace_validation_failed";
 export const ISSUE_TERMINAL_WORKSPACE_CLEANUP_REASON = "issue_terminal";
+// A shared session is archived on issue terminality alone, without the delivery
+// gates, because it owns no branch or directory to have undelivered work in.
+// Recording that separately keeps the two archive routes distinguishable after
+// the fact instead of collapsing them into one indistinguishable reason.
+export const ISSUE_TERMINAL_SHARED_SESSION_CLEANUP_REASON = "issue_terminal_shared_session";
 
 // The reopen-failure reason kept on the row when a rebuild does not finish. The
 // value is sanitized: it never contains a repository URL, a host path, or git
@@ -423,6 +428,25 @@ async function runExpensiveGitStatus(input: {
     fairnessKeys: input.fairnessKeys,
     cacheTtlMs: Math.max(0, Math.min(60_000, input.cacheTtlMs ?? 0)),
   });
+}
+
+/**
+ * The cooldown anchor is the most recent terminal timestamp across the whole
+ * issue tree. The reaper compares it against the cooldown window. A null anchor
+ * means no issue in the tree is terminal yet, so the cooldown never applies (the
+ * terminal-tree gates already block the archive).
+ */
+function issueTreeCooldownAnchor(
+  issueTree: readonly Parameters<typeof issueTerminalTimestamp>[0][],
+): Date | null {
+  let cooldownAnchor: Date | null = null;
+  for (const issue of issueTree) {
+    const terminalAt = issueTerminalTimestamp(issue);
+    if (terminalAt && (!cooldownAnchor || terminalAt.getTime() > cooldownAnchor.getTime())) {
+      cooldownAnchor = terminalAt;
+    }
+  }
+  return cooldownAnchor;
 }
 
 /**
@@ -1473,17 +1497,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
       ?? Boolean(sourceIssue && TERMINAL_ISSUE_STATUSES.has(sourceIssue.status));
     const subtreeTerminal = precomputed?.subtreeTerminal
       ?? Boolean(sourceIssue && issueTree.every((issue) => TERMINAL_ISSUE_STATUSES.has(issue.status)));
-    // The cooldown anchor is the most recent terminal timestamp across the whole
-    // issue tree. The reaper compares it against the cooldown window. A null
-    // anchor means no issue in the tree is terminal yet, so the cooldown never
-    // applies (the terminal-tree gates above already block the archive).
-    let cooldownAnchor: Date | null = null;
-    for (const issue of issueTree) {
-      const terminalAt = issueTerminalTimestamp(issue);
-      if (terminalAt && (!cooldownAnchor || terminalAt.getTime() > cooldownAnchor.getTime())) {
-        cooldownAnchor = terminalAt;
-      }
-    }
+    const cooldownAnchor = issueTreeCooldownAnchor(issueTree);
     let mergedPullRequest = false;
     let pullRequestStateUnknown = false;
     const workspaceHeadSha = git?.repoRoot && git.workspacePath
@@ -1822,10 +1836,18 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
       await assertTerminalCleanupGitStateUnchanged(workspace, expectedHeadSha);
       await opts.beforeTerminalWorkspaceCleanup?.(workspace);
       await assertTerminalCleanupGitStateUnchanged(workspace, expectedHeadSha);
+      // Scope the service teardown to what this row owns. stopRuntimeServices
+      // matches by cwd prefix as well as by workspace id, and a shared session's
+      // cwd is the project checkout that every other session for that project also
+      // points at -- 526 unclosed rows share a single directory on this deployment.
+      // Passing that cwd would stop a live neighbour's dev server as a side effect
+      // of archiving an unrelated terminal session. A shared session owns only the
+      // services bound to its own id; services it merely inherits from the project
+      // workspace are scoped to the project workspace and must outlive it.
       await stopRuntimeServicesForExecutionWorkspace({
         db,
         executionWorkspaceId: workspace.id,
-        workspaceCwd: workspace.cwd,
+        workspaceCwd: workspace.mode === "shared_workspace" ? null : workspace.cwd,
       });
       const cleanup = await cleanupExecutionWorkspaceArtifacts({
         workspace,
@@ -2639,6 +2661,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
           checked: 0,
           eligible: 0,
           archived: 0,
+          archivedSharedSession: 0,
           cleanupFailed: 0,
           skippedActiveRun: 0,
           skippedNonTerminalTree: 0,
@@ -2704,6 +2727,10 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
         checked: candidates.length,
         eligible: 0,
         archived: 0,
+        // Of `archived`, how many were shared sessions. The two routes reach the
+        // archive on different evidence, so one counter cannot show whether the
+        // delivery-gated route still works once the shared route starts firing.
+        archivedSharedSession: 0,
         cleanupFailed: 0,
         skippedActiveRun: 0,
         skippedNonTerminalTree: 0,
@@ -2753,49 +2780,79 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
           result.skippedNonTerminalTree += 1;
           continue;
         }
-        const sweepNowMs = now().getTime();
-        if (shouldSkipReaperGitInspection(workspace, sweepNowMs)) {
-          result.skippedRecentlyInspected += 1;
-          continue;
-        }
-        recordReaperGitInspection(workspace, sweepNowMs);
-        // One git read per directory per sweep: the rows that share a working
-        // tree share the snapshot it produced.
-        const gitReadinessKey =
-          readNullableString(workspace.providerRef)
-          ?? readNullableString(workspace.cwd)
-          ?? `workspace:${workspace.id}`;
-        let gitReadiness = perSweepGitReadiness.get(gitReadinessKey);
-        if (!gitReadiness) {
-          gitReadiness = inspectGitCloseReadiness(executionWorkspace);
-          perSweepGitReadiness.set(gitReadinessKey, gitReadiness);
-        }
-        const { git, statusInspectionSucceeded } = await gitReadiness;
-        if (!statusInspectionSucceeded) {
-          result.skippedUndelivered += 1;
-          continue;
-        }
-        // The reaper archives workspaces, so this inspection stays on live Git
-        // state. Only read and display callers use the bounded cache TTL.
-        const assessment = await assessDelivery(workspace, git, {
-          issueTree,
-          sourceIssueTerminal: treeTerminal.sourceIssueTerminal,
-          subtreeTerminal: treeTerminal.subtreeTerminal,
-        });
-        if (!assessment.sourceIssueTerminal || !assessment.subtreeTerminal) {
-          result.skippedNonTerminalTree += 1;
-          continue;
-        }
-        if (assessment.workspaceDirty) {
-          result.skippedUndelivered += 1;
-          continue;
-        }
-        if (
-          assessment.deliveryState !== "merged_via_pr"
-          && assessment.deliveryState !== "merged_by_ancestry"
-        ) {
-          result.skippedUndelivered += 1;
-          continue;
+        // A shared_workspace row is a session record pointing at project workspace
+        // infrastructure it does not own: no per-issue branch, no per-issue
+        // directory, no exclusive claim on the checkout. The git gates below ask
+        // whether archiving would destroy unmerged work in a worktree this row
+        // owns; for a shared session that is unanswerable. branch_name and
+        // base_ref are null, so isMergedIntoBase never resolves and no merged PR
+        // can match the branch; deliveryState is pinned at "unknown" and the
+        // dirty check reads a tree whose dirt belongs to whatever else uses that
+        // checkout. So a shared session skips the git inspection and the delivery
+        // gates; every other gate -- terminal subtree, cooldown, reopen fence,
+        // active run, and the full re-check inside the archive transaction --
+        // still applies to it.
+        const sharedSession = workspace.mode === "shared_workspace";
+        let assessment: Omit<Awaited<ReturnType<typeof assessDelivery>>, "deliveryState"> & {
+          deliveryState: ExecutionWorkspaceDeliveryState | null;
+        };
+        if (sharedSession) {
+          assessment = {
+            sourceIssueTerminal: treeTerminal.sourceIssueTerminal,
+            subtreeTerminal: treeTerminal.subtreeTerminal,
+            cooldownAnchor: issueTreeCooldownAnchor(issueTree),
+            // Not "unknown" -- these are not applicable to a session record. A
+            // shared session has no delivery to assess and no tree of its own to
+            // be dirty, and the archive below reads neither.
+            deliveryState: null,
+            workspaceDirty: false,
+            workspaceHeadSha: null,
+          };
+        } else {
+          const sweepNowMs = now().getTime();
+          if (shouldSkipReaperGitInspection(workspace, sweepNowMs)) {
+            result.skippedRecentlyInspected += 1;
+            continue;
+          }
+          recordReaperGitInspection(workspace, sweepNowMs);
+          // One git read per directory per sweep: the rows that share a working
+          // tree share the snapshot it produced.
+          const gitReadinessKey =
+            readNullableString(workspace.providerRef)
+            ?? readNullableString(workspace.cwd)
+            ?? `workspace:${workspace.id}`;
+          let gitReadiness = perSweepGitReadiness.get(gitReadinessKey);
+          if (!gitReadiness) {
+            gitReadiness = inspectGitCloseReadiness(executionWorkspace);
+            perSweepGitReadiness.set(gitReadinessKey, gitReadiness);
+          }
+          const { git, statusInspectionSucceeded } = await gitReadiness;
+          if (!statusInspectionSucceeded) {
+            result.skippedUndelivered += 1;
+            continue;
+          }
+          // The reaper archives workspaces, so this inspection stays on live Git
+          // state. Only read and display callers use the bounded cache TTL.
+          assessment = await assessDelivery(workspace, git, {
+            issueTree,
+            sourceIssueTerminal: treeTerminal.sourceIssueTerminal,
+            subtreeTerminal: treeTerminal.subtreeTerminal,
+          });
+          if (!assessment.sourceIssueTerminal || !assessment.subtreeTerminal) {
+            result.skippedNonTerminalTree += 1;
+            continue;
+          }
+          if (assessment.workspaceDirty) {
+            result.skippedUndelivered += 1;
+            continue;
+          }
+          if (
+            assessment.deliveryState !== "merged_via_pr"
+            && assessment.deliveryState !== "merged_by_ancestry"
+          ) {
+            result.skippedUndelivered += 1;
+            continue;
+          }
         }
         // Hold the archive during the cooldown window. The anchor is the most
         // recent terminal timestamp across the issue tree. A person can reopen
@@ -2894,7 +2951,9 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
               status: "archived",
               closedAt,
               cleanupEligibleAt: workspace.cleanupEligibleAt ?? closedAt,
-              cleanupReason: ISSUE_TERMINAL_WORKSPACE_CLEANUP_REASON,
+              cleanupReason: sharedSession
+                ? ISSUE_TERMINAL_SHARED_SESSION_CLEANUP_REASON
+                : ISSUE_TERMINAL_WORKSPACE_CLEANUP_REASON,
               metadata: archivedMetadata,
               updatedAt: closedAt,
             })
@@ -2986,8 +3045,9 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
           details: {
             sourceIssueId: archived.sourceIssueId,
             deliveryState: assessment.deliveryState,
+            sharedSession,
             cleanupEligibleAt: archived.cleanupEligibleAt?.toISOString() ?? null,
-            cleanupReason: ISSUE_TERMINAL_WORKSPACE_CLEANUP_REASON,
+            cleanupReason: archived.cleanupReason,
           },
         });
 
@@ -2998,7 +3058,10 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
           const cleanup = await cleanupTerminalWorkspace(archived, assessment.workspaceHeadSha, capturedGeneration);
           if (cleanup.skippedReopened) result.skippedReopened += 1;
           else if (!cleanup.cleaned) result.cleanupFailed += 1;
-          else result.archived += 1;
+          else {
+            result.archived += 1;
+            if (sharedSession) result.archivedSharedSession += 1;
+          }
         } catch (error) {
           result.cleanupFailed += 1;
           const failure = error instanceof Error ? error.message : String(error);
