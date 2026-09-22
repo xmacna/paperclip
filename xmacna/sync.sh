@@ -18,5 +18,9 @@ echo "xmacna à frente: $ahead | atrás do upstream: $behind"
 git merge --no-edit master
 export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 corepack pnpm install
+# O upstream às vezes muda um override antes de o CI dele atualizar o lockfile; o
+# install então reescreve pnpm-lock.yaml. O CI do upstream é dono do lockfile e a
+# árvore suja travaria o próximo sync, então descartamos essa reescrita local.
+git checkout -- pnpm-lock.yaml
 git push origin xmacna
 echo "Sync concluído. Reinicie o servidor para aplicar (migrations rodam no próximo dev:once)."
