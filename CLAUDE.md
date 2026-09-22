@@ -3,10 +3,14 @@
 Fork de `paperclipai/paperclip` usado para rodar o Paperclip local do Rafael e
 desenvolver funcionalidades próprias. Guia do projeto (upstream): @AGENTS.md
 
-## Remotes
+## Remotes e branches
 
 - `origin` = `xmacna/paperclip` (fork **público**; forks de repo público não podem ser privados).
 - `upstream` = `paperclipai/paperclip`, somente leitura (push desativado).
+- `master` = espelho idêntico do `upstream/master`. Nunca commitar nele; só fast-forward.
+- `xmacna` = versão de produção do Rafael (customizações próprias + merges do master).
+  É a branch que roda na máquina e a única que recebe commits nossos.
+- Correções gerais para o upstream saem de branches de feature criadas a partir de `master`.
 
 ## Rodar
 
@@ -20,8 +24,9 @@ desenvolver funcionalidades próprias. Guia do projeto (upstream): @AGENTS.md
 
 ## Sincronizar com o upstream
 
-`xmacna/sync.sh`: faz fetch do upstream, merge em `master`, `pnpm install` e push para origin.
-Merge, nunca rebase, porque o master do fork já foi publicado.
+`xmacna/sync.sh`: faz fetch do upstream, fast-forward de `master` (espelho), merge de
+`master` em `xmacna`, `pnpm install` e push das duas branches para origin.
+Merge, nunca rebase, porque a `xmacna` já foi publicada.
 
 ## Customizações próprias
 
