@@ -83,7 +83,7 @@ pnpm test:e2e:runner -- --suite daytona-warm-continuity
 pnpm test:e2e:runner -- --all
 ```
 
-The catalog contains eight suites, including the explicit-only everyday suite. `core-compatibility` (**Core Runner
+The catalog contains nine suites, including the explicit-only suites. `core-compatibility` (**Core Runner
 Compatibility**) is seven major runner profiles × local/Daytona × three
 workflows: 42 cells. Its cases are:
 
@@ -176,6 +176,9 @@ fails the case instead of silently testing another phase.
 Restart continuity requires the agent to recall a phrase after the server
 restarts. The final prompt does not reveal that phrase. A generic successful
 reply after restart cannot pass this check.
+The browser leaves the old development client before the server stops, then
+opens the canonical chat route and waits for the composer. This avoids racing
+Vite's automatic reconnect navigation against the test's explicit navigation.
 
 The blocker query requests a JSON status snapshot. It must name the current
 recorded blocker and report zero active runs independently of the task's blocked
@@ -187,6 +190,29 @@ Paperclip, and replays the exact public request with the original client request
 requires the original comment, task, plan, and single consuming run. This proves
 HTTP request idempotency across restart, not replay safety for an ambiguous
 provider tool response. Existing native tool-receipt tests cover that boundary.
+
+`agent-chat-stories` adds six explicit-only local cells across native Codex and
+Claude. `enable-disable-resume` uses the Experimental settings UI to enable
+Agent Chat, starts a conversation, disables new messages, verifies the public
+write endpoint rejects a send without creating work, and re-enables the same
+conversation with its remembered context. The company, credential, and native
+agent are fixture-provisioned. This qualifies the experimental-settings path,
+not native first-run onboarding: the current production wizard offers legacy
+adapters, and native API tools remain an independent opt-in.
+
+`followup-while-running` and `revise-while-running` send a second browser message
+while the provider runs a bounded command waiting for a fixture brief file.
+The command publishes its own readiness file; the harness verifies the original
+run is still active after the follow-up is saved, then supplies the brief.
+The final reply must contain the previously undisclosed brief reference and the
+new request's marker. The revision case also checks the saved plan uses Friday
+instead of the original Monday. The oracle permits either steering the active
+run or one queued successor, but rejects missing/duplicate comments, failed or
+unfinished runs, stale plan contents, and unintended tasks/projects. This does
+not qualify active-task reassignment or worker-crash recovery.
+The maximum run count remains the cost estimate; the shared harness honors the
+one-run minimum only for these two interruption cases. Exactly one reply may
+consume the follow-up marker, and it must be attributed to the final provider run.
 
 ```sh
 pnpm test:e2e:runner -- --list --suite agent-chat-hardening
@@ -224,7 +250,8 @@ Missing provider credentials fail paid preflight and are not passing coverage.
 
 The default `--all` selection is 171 cells (148 local and 23 Daytona) and 371
 expected paid agent turns. The explicit-only everyday suite adds 38 catalog cells
-and chat hardening adds 18. Both are excluded from `--all`. The full catalog has 227 cells.
+and chat hardening adds 18; chat stories adds six. All three are excluded from
+`--all`. The full catalog has 239 cells.
 Follow-up steps remain ordered within their cell; all other
 cells are independent. Narrow selectors are strongly recommended while
 developing fixtures.
@@ -859,3 +886,54 @@ fetched snapshots does not trigger this rejection. Successful work alone does
 not prove that this recovery path was tested.
 
 The native `agent-chat.create-backlog` case saves a plan and assigned backlog task, then asks for its status. It checks the original creation audit, absence of all task runs, plan persistence, and exactly one task, so creating runnable work and correcting its status afterward fails the eval.
+
+### Remaining native Agent Chat qualification
+
+`agent-chat-qualification` is an explicit-only, local suite with six cells:
+`active-reassignment`, `worker-crash-retry`, and `grounded-answer-quality`, each
+on native Codex and native Claude. Run with
+`pnpm test:e2e:runner -- --suite agent-chat-qualification`.
+
+Active reassignment waits for a real worker to save a draft and enter a bounded
+file wait. The lead then transfers the same task through Agent Chat. The oracle
+requires cancellation with `issue_reassigned`, no overlap with the successor,
+one successor run, unchanged scope and plan, retained draft, and a completed
+successor-owned document. It budgets three provider runs.
+
+Worker recovery requires Linux with Python pidfd support (as on the CI workers).
+It kills only the exact running native worker PID from the public
+run record, after verifying its command-line run ID, process start identity, and isolated
+local workspace. The signal uses an owned pidfd so PID reuse cannot retarget it. The real UI must show one Retry button. Clicking it must produce one
+successful attempt, consume the original message once, preserve the saved plan,
+and return a reference that was supplied only after the crash. This qualifies
+**user-initiated Retry after worker process loss**, not automatic recovery of
+arbitrary provider failures. It budgets two provider runs. Unexpected failures
+remain fatal; only the positively identified injected-fault run is exempted.
+
+Answer quality uses two read-only turns over public fixture tasks and conflicting
+historical comments. Exact structured propositions grade current blockers,
+backlog versus active work, stale claims, and unknown facts. The written answers
+and source records are retained for separate semantic review of factual grounding,
+correction, uncertainty, usefulness, and clarity. Deterministic facts do not certify
+all prose quality. This case explicitly enables the existing experimental API
+context tools; the two recovery cases use the default native tool surface.
+
+All cells have a 15-minute deadline. Evidence includes boundary and final run
+records, documents, source facts, chat comments, and screenshots. Gates are
+released on failure and normal isolated-instance cleanup removes the workspace.
+The usual provider billing and partial-attempt reporting apply. No production
+prompts, onboarding defaults, or provider permissions are changed.
+
+For pre-default native onboarding qualification, select all `first-task` cases
+with profiles `runner-codex,runner-acpx-claude` (26 cells). The existing public-API
+runtime switch occurs after the real wizard creates its first agent and before
+any provider work. It preserves the wizard's model, persona, skills, and task.
+This tests the native first-task process in advance of the UI/default rollout;
+it does not certify a native option in the wizard, which is not offered yet.
+
+Current proof and remaining decisions are recorded in
+[the 21 September qualification report](QUALIFICATION-2026-09-21.md). In particular,
+worker loss currently quarantines both providers. The crash eval retains a red
+qualification result when no usable recovery exists, while also verifying that
+quarantine preserves the plan and rejects a misleading generic Retry. A passing
+quarantine guard is not a recovered workflow.
