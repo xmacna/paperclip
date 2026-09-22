@@ -40,8 +40,18 @@ function cacheKeyForTarget(command: string, target: AdapterExecutionTarget | nul
   ].join(":");
 }
 
+// The API rejects Opus 5.5 from older builds with "Claude Code 2.1.263 does not
+// support this model; version 2.1.280 or newer is required".
+export const CLAUDE_OPUS_5_5_MIN_CLI_VERSION = "2.1.280";
+
+const CLAUDE_OPUS_5_5_MODEL_IDS = new Set([
+  "claude-opus-5-5",
+]);
+
 export function minimumClaudeCliVersionForModel(model: string): string | null {
-  return CLAUDE_FABLE_5_1_MODEL_IDS.has(model.trim())
+  const id = model.trim();
+  if (CLAUDE_OPUS_5_5_MODEL_IDS.has(id)) return CLAUDE_OPUS_5_5_MIN_CLI_VERSION;
+  return CLAUDE_FABLE_5_1_MODEL_IDS.has(id)
     ? CLAUDE_FABLE_5_1_MIN_CLI_VERSION
     : null;
 }
