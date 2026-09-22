@@ -19811,7 +19811,32 @@ export function heartbeatService(
       const claimedRuns: Array<typeof heartbeatRuns.$inferSelect> = [];
       for (const queuedRun of prioritizedRuns) {
         if (claimedRuns.length >= availableSlots) break;
-        const claimed = await claimQueuedRun(queuedRun, companyAgents);
+        let claimed: Awaited<ReturnType<typeof claimQueuedRun>>;
+        try {
+          claimed = await claimQueuedRun(queuedRun, companyAgents);
+        } catch (err) {
+          // A 403 here is a deterministic identity denial (e.g. a
+          // queued-comment interrupt whose receipt was already consumed by an
+          // earlier run). Retrying never helps, and letting it propagate would
+          // abort this loop for every other queued run of the agent plus the
+          // caller's remaining recovery steps on each tick. Cancel just that run
+          // and keep draining the queue.
+          if (!(err instanceof HttpError) || err.status !== 403) throw err;
+          logger.warn(
+            { err, runId: queuedRun.id, agentId: queuedRun.agentId },
+            "claimQueuedRun: cancelling queued run whose run identity was denied",
+          );
+          await cancelRunInternal(
+            queuedRun.id,
+            `Cancelled because the queued run could not be claimed: ${err.message}`,
+          ).catch((cancelErr) => {
+            logger.error(
+              { err: cancelErr, runId: queuedRun.id },
+              "claimQueuedRun: failed to cancel unclaimable queued run",
+            );
+          });
+          continue;
+        }
         if (claimed) claimedRuns.push(claimed);
       }
       if (claimedRuns.length === 0) return [];
