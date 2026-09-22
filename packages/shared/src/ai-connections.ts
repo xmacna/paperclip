@@ -97,7 +97,10 @@ export const AI_CONNECTION_CAPABILITIES: Record<
   openrouter: {
     name: "OpenRouter",
     methods: {
-      api_key: { adapters: ["opencode_local"], envKey: "OPENROUTER_API_KEY" },
+      api_key: {
+        adapters: ["opencode_local", "pi_local"],
+        envKey: "OPENROUTER_API_KEY",
+      },
     },
   },
   xai: {

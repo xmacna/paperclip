@@ -39,6 +39,8 @@ export const AI_AUTH_ENV_KEYS = [
   "OPENCODE_CONFIG",
   "OPENCODE_CONFIG_DIR",
   "PAPERCLIP_OPENCODE_PROVIDERS",
+  "PI_CODING_AGENT_DIR",
+  "PAPERCLIP_PI_PROVIDERS",
   "ANTHROPIC_BASE_URL",
   "OPENAI_BASE_URL",
   "XAI_BASE_URL",
@@ -218,6 +220,8 @@ export async function prepareManagedAiRuntime(
     "CLAUDE_CODE_USE_VERTEX",
     "CLAUDE_CODE_USE_FOUNDRY",
     "PAPERCLIP_OPENCODE_PROVIDERS",
+    "PI_CODING_AGENT_DIR",
+    "PAPERCLIP_PI_PROVIDERS",
   ]) {
     if (configuredEnv[key])
       throw unprocessable(

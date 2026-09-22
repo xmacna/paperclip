@@ -12,7 +12,7 @@ import { createDb, companies, agents, heartbeatRuns, companyMemberships, connect
 import { startEmbeddedPostgresTestDatabase } from "@paperclipai/db/test-embedded-postgres";
 import { aiConnectionService } from "../services/ai-connections.js";
 import * as executionTarget from "@paperclipai/adapter-utils/execution-target";
-import { prepareManagedAiRuntime, assertManagedAiProjectAuth } from "../services/ai-connection-runtime.js";
+import { prepareManagedAiRuntime, assertManagedAiProjectAuth, stripAiAuthBindings } from "../services/ai-connection-runtime.js";
 import { toolAccessService } from "../services/tool-access.js";
 import { secretService } from "../services/secrets.js";
 import { aiConnectionBindingSchema, connectionPurposeTransportSchema, isAiConnectionCompatible } from "@paperclipai/shared";
@@ -463,6 +463,15 @@ describe("managed AI connections", () => {
     expect(isAiConnectionCompatible(binding, "paperclip_runner", "same-model", "acpx", "claude")).toBe(true);
     expect(isAiConnectionCompatible(binding, "paperclip_runner", "same-model", "acpx", "codex")).toBe(false);
     expect(isAiConnectionCompatible({ provider: "openrouter", method: "api_key" }, "opencode_local", "anthropic/model")).toBe(false);
+    expect(isAiConnectionCompatible({ provider: "openrouter", method: "api_key" }, "pi_local", "openrouter/deepseek/deepseek-v4.1-flash")).toBe(true);
+    expect(isAiConnectionCompatible({ provider: "openrouter", method: "api_key" }, "pi_local", "deepseek/deepseek-v4.1-flash")).toBe(false);
+  });
+  it("removes Pi provider overrides before managed AI credentials are injected", () => {
+    expect(stripAiAuthBindings({
+      KEEP_ME: "yes",
+      PI_CODING_AGENT_DIR: "/tmp/unmanaged-pi",
+      PAPERCLIP_PI_PROVIDERS: "{\"openrouter\":{}}",
+    })).toEqual({ KEEP_ME: "yes" });
   });
   it("does not let a forged delegation bypass human access or accept an expired subscription attempt", async () => {
     const selected = await service.select({ ...input, userId: "alice" });

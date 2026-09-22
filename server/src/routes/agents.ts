@@ -3228,7 +3228,7 @@ export function agentRoutes(
       return;
     }
     const provider = asNonEmptyString(req.query.provider);
-    if (type === "opencode_local" && provider === "openrouter") {
+    if ((type === "opencode_local" || type === "pi_local") && provider === "openrouter") {
       res.json(await listOpenRouterModels(refresh));
       return;
     }
