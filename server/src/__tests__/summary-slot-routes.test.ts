@@ -272,6 +272,17 @@ describe("summary slot routes", () => {
       );
     });
 
+    it("rejects agent writes across company boundaries", async () => {
+      const app = await createApp({ ...agentActor, companyId: otherCompanyId });
+      const res = await request(app).put(slotPath).send({
+        markdown: "# Summary",
+        generationIssueId: generatingIssueId,
+      });
+      expect(res.status, JSON.stringify(res.body)).toBe(403);
+      expect(res.body.error).toBe("Agent key cannot access another company");
+      expect(mockSummarySlotService.write).not.toHaveBeenCalled();
+    });
+
     it("rejects writes from board actors", async () => {
       const app = await createApp(boardActor);
       const res = await request(app).put(slotPath).send({ markdown: "# Summary" });
