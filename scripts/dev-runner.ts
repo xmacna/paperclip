@@ -11,6 +11,11 @@ import {
   resolveNativeRunnerRequirement,
 } from "./dev-runner-native-binary.mjs";
 import { applyDevRunnerOptions } from "./dev-runner-options.ts";
+import {
+  readServerLaunchChain,
+  signalProcess,
+  waitForProcessesToExit,
+} from "./dev-runner-process-tree.ts";
 import { collectWatchedSnapshot as collectDevServerWatchedSnapshot, diffSnapshots } from "./dev-runner-snapshot.mjs";
 import { createDevServiceIdentity, repoRoot } from "./dev-service-profile.ts";
 import { bootstrapDevRunnerWorktreeEnv, isWorktreeSeedPending } from "../server/src/dev-runner-worktree.ts";
@@ -690,17 +695,38 @@ async function waitForChildExit() {
   return await childExitPromise;
 }
 
+// pnpm runs the server script through `sh -c`, which exits on SIGTERM without
+// forwarding it; signalling only pnpm orphans the running server. Signal the
+// launch chain down to the tsx CLI, which relays to the server exactly once.
+function signalServerChild(signal: NodeJS.Signals) {
+  const current = child;
+  if (!current) return null;
+  const launch = current.pid ? readServerLaunchChain(current.pid) : null;
+  current.kill(signal);
+  for (const pid of launch?.wrappers ?? []) {
+    if (pid !== current.pid) signalProcess(pid, signal);
+  }
+  return launch;
+}
+
 async function stopChildForRestart() {
   if (!child) return { code: 0, signal: null };
   childExitWasExpected = true;
-  child.kill("SIGTERM");
+  const launch = signalServerChild("SIGTERM");
+  const launchPids = launch ? [...launch.wrappers, ...(launch.server ? [launch.server] : [])] : [];
+  const deadline = Date.now() + gracefulShutdownTimeoutMs;
   const killTimer = setTimeout(() => {
     if (child) {
       child.kill("SIGKILL");
     }
   }, gracefulShutdownTimeoutMs);
   try {
-    return await waitForChildExit();
+    const exit = await waitForChildExit();
+    // The replacement must not start while the old server still holds the port.
+    const survivors = await waitForProcessesToExit(launchPids, Math.max(0, deadline - Date.now()));
+    for (const pid of survivors) signalProcess(pid, "SIGKILL");
+    if (survivors.length > 0) await waitForProcessesToExit(survivors, 2_000);
+    return exit;
   } finally {
     clearTimeout(killTimer);
   }
@@ -866,7 +892,7 @@ async function shutdown(signal: NodeJS.Signals) {
   }
 
   childExitWasExpected = true;
-  child.kill(signal);
+  signalServerChild(signal);
   const exit = await waitForChildExit();
   if (exit.signal) {
     exitForSignal(exit.signal);
