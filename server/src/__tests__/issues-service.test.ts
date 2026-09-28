@@ -41,6 +41,7 @@ import {
   deriveIssueCommentRunLogAttribution,
   ISSUE_LIST_MAX_LIMIT,
   issueService,
+  MAX_CHILD_ISSUES_CREATED_BY_HELPER,
 } from "../services/issues.ts";
 import {
   WORKSPACE_WORKTREE_REQUIRES_PROJECT_CODE,
@@ -4272,6 +4273,85 @@ describeEmbeddedPostgres("issueService blockers and dependency wake readiness", 
     expect(child.parentId).toBe(parentId);
     expect(child.blockedBy.map((relation) => relation.id)).toEqual([blockerId]);
     expect(child.blocks).toEqual([]);
+  });
+
+  it("createChild caps only open children, ignoring done, cancelled, and hidden ones", async () => {
+    const companyId = randomUUID();
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const parentId = randomUUID();
+    await db.insert(issues).values({
+      id: parentId,
+      companyId,
+      title: "Long-running parent",
+      status: "in_progress",
+      priority: "medium",
+    });
+
+    const closedStatuses = ["done", "cancelled"] as const;
+    await db.insert(issues).values(
+      Array.from({ length: MAX_CHILD_ISSUES_CREATED_BY_HELPER }, (_, index) => ({
+        id: randomUUID(),
+        companyId,
+        parentId,
+        title: `Closed child ${index + 1}`,
+        status: closedStatuses[index % closedStatuses.length],
+        priority: "medium",
+      })),
+    );
+    await db.insert(issues).values({
+      id: randomUUID(),
+      companyId,
+      parentId,
+      title: "Hidden open child",
+      status: "todo",
+      priority: "medium",
+      hiddenAt: new Date(),
+    });
+    await db.insert(issues).values(
+      Array.from({ length: MAX_CHILD_ISSUES_CREATED_BY_HELPER - 1 }, (_, index) => ({
+        id: randomUUID(),
+        companyId,
+        parentId,
+        title: `Open child ${index + 1}`,
+        status: index % 2 === 0 ? "todo" : "in_review",
+        priority: "medium",
+      })),
+    );
+
+    const { issue: lastOpenChild } = await svc.createChild(parentId, {
+      title: "Open child at the cap",
+      status: "todo",
+      priority: "medium",
+    });
+    expect(lastOpenChild.parentId).toBe(parentId);
+
+    await expect(
+      svc.createChild(parentId, {
+        title: "Open child over the cap",
+        status: "todo",
+        priority: "medium",
+      }),
+    ).rejects.toThrow(
+      `Parent issue already has the maximum ${MAX_CHILD_ISSUES_CREATED_BY_HELPER} open child issues for this helper`,
+    );
+
+    await db
+      .update(issues)
+      .set({ status: "done" })
+      .where(eq(issues.id, lastOpenChild.id));
+
+    const { issue: reopenedSlotChild } = await svc.createChild(parentId, {
+      title: "Open child after one closes",
+      status: "todo",
+      priority: "medium",
+    });
+    expect(reopenedSlotChild.parentId).toBe(parentId);
   });
 
   it("returns blocks summaries when child creation blocks the parent", async () => {
