@@ -9177,6 +9177,8 @@ export function issueService(db: Db) {
         }
       }
 
+      // The cap throttles runaway fan-out, so only open children count;
+      // closed or hidden children must not lock long-running parents forever.
       const [{ childCount }] = await db
         .select({ childCount: sql<number>`count(*)::int` })
         .from(issues)
@@ -9184,11 +9186,13 @@ export function issueService(db: Db) {
           and(
             eq(issues.companyId, parent.companyId),
             eq(issues.parentId, parent.id),
+            isNull(issues.hiddenAt),
+            notInArray(issues.status, ["done", "cancelled"]),
           ),
         );
       if (childCount >= MAX_CHILD_ISSUES_CREATED_BY_HELPER) {
         throw unprocessable(
-          `Parent issue already has the maximum ${MAX_CHILD_ISSUES_CREATED_BY_HELPER} child issues for this helper`,
+          `Parent issue already has the maximum ${MAX_CHILD_ISSUES_CREATED_BY_HELPER} open child issues for this helper`,
         );
       }
 
