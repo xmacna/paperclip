@@ -98,6 +98,29 @@ describe("operator-login Claude subscriptions follow the live token", () => {
     expect(await aiConnectionService(db).credential(await f.select())).toBe("stored-token");
   });
 
+  it("follows PAPERCLIP_OPERATOR_CLAUDE_CONFIG_DIR instead of CLAUDE_CONFIG_DIR", async () => {
+    const f = await fixture(true);
+    await writeLiveCredential("default-dir-token", Date.now() + 60 * 60 * 1000);
+    const operatorDir = path.join(home, "operator-claude");
+    await mkdir(operatorDir, { recursive: true });
+    await writeFile(
+      path.join(operatorDir, ".credentials.json"),
+      JSON.stringify({ claudeAiOauth: { accessToken: "operator-dir-token", expiresAt: Date.now() + 60 * 60 * 1000 } }),
+      { mode: 0o600 },
+    );
+    vi.stubEnv("PAPERCLIP_OPERATOR_CLAUDE_CONFIG_DIR", operatorDir);
+    try {
+      const runtime = await f.runtime();
+      try {
+        expect(runtime.config.env).toMatchObject({ CLAUDE_CODE_OAUTH_TOKEN: "operator-dir-token" });
+      } finally {
+        await runtime.cleanup();
+      }
+    } finally {
+      vi.stubEnv("PAPERCLIP_OPERATOR_CLAUDE_CONFIG_DIR", "");
+    }
+  });
+
   it("leaves connections without the operator-login marker untouched", async () => {
     const f = await fixture(false);
     await writeLiveCredential("live-token", Date.now() + 60 * 60 * 1000);

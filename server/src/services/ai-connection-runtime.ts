@@ -241,7 +241,10 @@ export async function refreshOperatorClaudeCredential(
   if (!isOperatorClaudeLogin(selection)) return stored;
   let live: string | null = null;
   try {
-    live = await readClaudeToken({ allowKeychain: true });
+    // PAPERCLIP_OPERATOR_CLAUDE_CONFIG_DIR picks the operator login to follow
+    // without exporting CLAUDE_CONFIG_DIR, which runs would inherit.
+    const configDir = process.env.PAPERCLIP_OPERATOR_CLAUDE_CONFIG_DIR?.trim() || undefined;
+    live = await readClaudeToken({ allowKeychain: true, configDir });
   } catch {
     return stored;
   }

@@ -188,8 +188,8 @@ export async function readIsolatedClaudeKeychainToken(loginHome: string): Promis
   return readClaudeTokenFromKeychain(isolatedKeychainService(loginHome));
 }
 
-export async function readClaudeToken(options: { allowKeychain?: boolean } = {}): Promise<string | null> {
-  const configDir = claudeConfigDir();
+export async function readClaudeToken(options: { allowKeychain?: boolean; configDir?: string } = {}): Promise<string | null> {
+  const configDir = options.configDir ?? claudeConfigDir();
   for (const filename of [".credentials.json", "credentials.json"]) {
     const token = await readClaudeTokenFromFile(path.join(configDir, filename));
     if (token) return token;
