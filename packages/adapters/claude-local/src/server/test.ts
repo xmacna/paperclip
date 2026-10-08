@@ -203,6 +203,8 @@ export async function testEnvironment(
       detail: `Detected in ${source}.`,
       hint: "Ensure AWS credentials (AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY or AWS_PROFILE) and AWS_REGION are configured.",
     });
+  } else if (config.managedAiRouting) {
+    checks.push({ code: "claude_managed_provider_configured", level: "info", message: "Testing the selected connection’s provider and model." });
   } else if (isNonEmpty(configApiKey) || isNonEmpty(hostApiKey)) {
     const source = isNonEmpty(configApiKey) ? "adapter config env" : "server environment";
     const selectedApiKey = Boolean(config.managedAiConnection) || isNonEmpty(configApiKey);
@@ -266,9 +268,9 @@ export async function testEnvironment(
       code: "claude_cli_version_probe_mismatch",
       level: "warn",
       message:
-        "Skipped Fable 5.1 readiness probing because the runtime PATH selects a different Claude executable than the trusted local Test probe.",
+        `Skipped ${configuredModel} readiness probing because the runtime PATH selects a different Claude executable than the trusted local Test probe.`,
       hint:
-        "Ensure the runtime-selected Claude Code is 2.1.251 or newer. Execution will verify that exact executable before launch.",
+        `Ensure the runtime-selected Claude Code is ${minimumCliVersion} or newer. Execution will verify that exact executable before launch.`,
     });
   } else if (canRunProbe && minimumCliVersion && versionProbeCommand) {
     const versionProbeEnv = localProbe?.env ?? env;
@@ -289,7 +291,7 @@ export async function testEnvironment(
       checks.push({
         code: "claude_cli_version_incompatible",
         level: "error",
-        message: `Claude Fable 5.1 requires Claude Code ${minimumCliVersion} or newer on the CLI lane.`,
+        message: `${configuredModel} requires Claude Code ${minimumCliVersion} or newer on the CLI lane.`,
         detail: detectedCliVersion
           ? `Detected Claude Code ${detectedCliVersion}.`
           : "Could not determine the installed Claude Code version.",

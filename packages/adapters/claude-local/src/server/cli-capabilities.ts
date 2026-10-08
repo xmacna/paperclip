@@ -6,11 +6,6 @@ const effortFlagSupportCache = new Map<string, Promise<boolean | null>>();
 
 export const CLAUDE_FABLE_5_1_MIN_CLI_VERSION = "2.1.251";
 
-const CLAUDE_FABLE_5_1_MODEL_IDS = new Set([
-  "claude-fable-5-1",
-  "us.anthropic.claude-fable-5-1",
-]);
-
 export function claudeCommandLooksLike(command: string, expected = "claude"): boolean {
   const base = path.basename(command).toLowerCase();
   return base === expected || base === `${expected}.cmd` || base === `${expected}.exe`;
@@ -40,18 +35,11 @@ function cacheKeyForTarget(command: string, target: AdapterExecutionTarget | nul
   ].join(":");
 }
 
-// The API rejects Opus 5.5 from older builds with "Claude Code 2.1.263 does not
-// support this model; version 2.1.280 or newer is required".
-export const CLAUDE_OPUS_5_5_MIN_CLI_VERSION = "2.1.280";
-
-const CLAUDE_OPUS_5_5_MODEL_IDS = new Set([
-  "claude-opus-5-5",
-]);
-
 export function minimumClaudeCliVersionForModel(model: string): string | null {
-  const id = model.trim();
-  if (CLAUDE_OPUS_5_5_MODEL_IDS.has(id)) return CLAUDE_OPUS_5_5_MIN_CLI_VERSION;
-  return CLAUDE_FABLE_5_1_MODEL_IDS.has(id)
+  const modelId = model.trim().replace(/\[1m\]$/, "").replace(/^(?:(?:us|eu|apac|global)\.)?anthropic\./, "");
+  if (modelId === "claude-opus-5-5") return "2.1.280";
+  if (modelId === "claude-sonnet-5-5") return "2.1.284";
+  return modelId === "claude-fable-5-1"
     ? CLAUDE_FABLE_5_1_MIN_CLI_VERSION
     : null;
 }

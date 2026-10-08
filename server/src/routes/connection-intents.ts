@@ -59,16 +59,7 @@ export function runtimeConnectionIntentRoutes(db: Db) {
 
   router.get("/mcp/runtime-tools", async (req, res) => {
     await service.validate(runtimeClaims(req));
-    // Streamable HTTP clients open GET with `Accept: text/event-stream` to
-    // listen for server-initiated messages. This endpoint has no such stream;
-    // answering 200 JSON makes the MCP SDK treat the body as an SSE stream that
-    // ended early and reconnect every second for the whole run. 405 is the
-    // spec-defined "no GET stream here" answer and stops the loop.
-    if (acceptsEventStream(req)) {
-      res.status(405).set("Allow", "POST").end();
-      return;
-    }
-    res.json({ name: "paperclip-runtime-tools", protocolVersion: "2025-03-26" });
+    res.set("Allow", "POST").status(405).end();
   });
 
   router.post("/mcp/runtime-tools", async (req, res) => {
@@ -112,13 +103,13 @@ export function runtimeConnectionIntentRoutes(db: Db) {
       const name = typeof params.name === "string" ? params.name : "";
       if (name === "connections_search") {
         const input = connectionsSearchInputSchema.parse(params.arguments ?? {});
-        const result = await service.search(claims, input.query);
+        const result = await service.search(claims, input.query, { retryProviderChoice: input.retryProviderChoice });
         res.json({ jsonrpc: "2.0", id, result: resultContent(result) });
         return;
       }
       if (name === "connection_request") {
         const input = connectionRequestInputSchema.parse(params.arguments ?? {});
-        const result = await service.request(claims, input.service);
+        const result = await service.request(claims, input.service, { selectionInteractionId: input.selectionInteractionId, targetService: input.targetService, connectionId: input.connectionId, toolNames: input.toolNames });
         res.json({ jsonrpc: "2.0", id, result: resultContent(result) });
         return;
       }
@@ -138,11 +129,11 @@ export function runtimeConnectionIntentRoutes(db: Db) {
 
   router.post("/runtime-tools/connections/search", async (req, res) => {
     const input = connectionsSearchInputSchema.parse(req.body ?? {});
-    res.json(await service.search(runtimeClaims(req), input.query));
+    res.json(await service.search(runtimeClaims(req), input.query, { retryProviderChoice: input.retryProviderChoice }));
   });
   router.post("/runtime-tools/connections/request", async (req, res) => {
     const input = connectionRequestInputSchema.parse(req.body ?? {});
-    res.json(await service.request(runtimeClaims(req), input.service));
+    res.json(await service.request(runtimeClaims(req), input.service, { selectionInteractionId: input.selectionInteractionId, targetService: input.targetService, connectionId: input.connectionId, toolNames: input.toolNames }));
   });
   return router;
 }
@@ -251,9 +242,4 @@ export function connectionIntentBoardRoutes(db: Db, heartbeat: Heartbeat) {
   });
 
   return router;
-}
-
-function acceptsEventStream(req: { headers: Record<string, unknown> }) {
-  const accept = req.headers.accept;
-  return typeof accept === "string" && accept.toLowerCase().includes("text/event-stream");
 }
