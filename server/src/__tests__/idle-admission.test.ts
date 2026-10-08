@@ -33,6 +33,25 @@ describe("idle admission", () => {
     expect(idleWorkSnapshot().active).toBe(0);
   });
 
+  it("tracks a mounted connect-style app whose layers carry string routes", async () => {
+    // Vite's dev middleware is a connect app: `stack` of `{ route: "/path", handle }`.
+    const server = app();
+    const asset = (_req: express.Request, res: express.Response) => { res.sendStatus(204); };
+    const connectApp = Object.assign(
+      (req: express.Request, res: express.Response, next: express.NextFunction) => {
+        if (req.path === "/@vite/client") return connectApp.stack[0].handle(req, res, next);
+        return next();
+      },
+      { stack: [{ route: "/@vite/client", handle: asset }] },
+    );
+    server.use(connectApp);
+    server.get("/api/ok", (_req, res) => res.sendStatus(204));
+    expect(() => trackIdleRequestHandlers(server)).not.toThrow();
+    await request(server).get("/@vite/client").expect(204);
+    await request(server).get("/api/ok").expect(204);
+    expect(idleWorkSnapshot().active).toBe(0);
+  });
+
   it("counts a nested async handler after it sends a response", async () => {
     const server = app();
     const router = express.Router();
