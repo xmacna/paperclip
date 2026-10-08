@@ -222,19 +222,23 @@ type ManagedAiSelection = Awaited<
  * live token before each run and rotate the stored secret when it moved. Any
  * failure keeps the stored value; an expired live file reads as null.
  */
+export function isOperatorClaudeLogin(selection: ManagedAiSelection): boolean {
+  if (
+    selection.attribution.provider !== "anthropic" ||
+    selection.attribution.method !== "subscription"
+  )
+    return false;
+  const config = selection.connection.config as Record<string, unknown> | null;
+  return config?.aiOperatorLogin === true;
+}
+
 export async function refreshOperatorClaudeCredential(
   db: Db,
   selection: ManagedAiSelection,
   stored: string,
   companyId: string,
 ): Promise<string> {
-  if (
-    selection.attribution.provider !== "anthropic" ||
-    selection.attribution.method !== "subscription"
-  )
-    return stored;
-  const config = selection.connection.config as Record<string, unknown> | null;
-  if (config?.aiOperatorLogin !== true) return stored;
+  if (!isOperatorClaudeLogin(selection)) return stored;
   let live: string | null = null;
   try {
     live = await readClaudeToken({ allowKeychain: true });
@@ -368,7 +372,8 @@ export async function prepareManagedAiRuntime(
         .from(companySecrets).where(and(eq(companySecrets.companyId, input.companyId), eq(companySecrets.id, credentialRef.secretId))).limit(1))[0];
     };
     // xmacna: follow the operator's live Claude token before reading the stored credential.
-    if (!noAuth) {
+    // Other providers must not read the secret here: it would wait on a row lock held by a rotation.
+    if (!noAuth && isOperatorClaudeLogin(selection)) {
       await refreshOperatorClaudeCredential(db, selection, await service.credential(selection), input.companyId);
     }
     const { value, freshness } = await (async () => {
