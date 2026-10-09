@@ -582,6 +582,26 @@ describe("shared ACPX engine runtime behavior", () => {
     expect(JSON.stringify(config)).not.toContain("assigned-tool-token");
   });
 
+  it("keeps the managed GitHub launcher capability in Codex shells without serializing it", async () => {
+    const { meta } = await runExecutor({ agent: "codex", env: {
+      PAPERCLIP_GITHUB_BROKER_TOKEN: "broker-capability-value",
+      PAPERCLIP_GITHUB_LAUNCHER_DIR: "/tmp/paperclip-github-runtime/run",
+      GH_TOKEN: "host-gh-token",
+    } }, {
+      authToken: "assigned-run-token",
+      agentIdentity: { keyId: "sha256:test", publicKeyPem: "public", privateKeyPem: "private" },
+    });
+    const env = meta[0]?.env as Record<string, string>;
+    const config = JSON.parse(String(env.CODEX_CONFIG));
+    // Present in the agent process env; meta only ever shows it redacted.
+    expect(env.PAPERCLIP_GITHUB_BROKER_TOKEN).toBe("***REDACTED***");
+    expect(config.shell_environment_policy.include_only).toEqual(expect.arrayContaining([
+      "PAPERCLIP_GITHUB_BROKER_TOKEN", "PAPERCLIP_GITHUB_LAUNCHER_DIR",
+    ]));
+    expect(config.shell_environment_policy.include_only).not.toContain("GH_TOKEN");
+    expect(JSON.stringify(config)).not.toContain("broker-capability-value");
+  });
+
   it("forwards arbitrary Codex model IDs verbatim without picker-dependent session config", async () => {
     const arbitraryModel = "gpt-999-test-does-not-exist";
     const { configOptions, meta } = await runExecutor({

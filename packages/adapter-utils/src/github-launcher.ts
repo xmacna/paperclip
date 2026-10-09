@@ -116,6 +116,16 @@ main().catch(() => { process.stderr.write('Paperclip: GitHub launcher_setup_fail
 `;
 }
 
+/**
+ * Run-scoped capabilities the launcher reads from the agent shell. Shell
+ * allowlists that drop secret-named keys must still keep these, or every
+ * managed git/gh call reports `capability_missing`.
+ */
+export const GITHUB_LAUNCHER_CAPABILITY_ENV_KEYS: readonly string[] = [
+  "PAPERCLIP_GITHUB_BROKER_TOKEN",
+  "PAPERCLIP_GITHUB_BRIDGE_TOKEN",
+];
+
 /** Override inherited credentials even when adapters merge the host environment later. */
 export function githubBrokerEnvironment(input: Record<string, unknown>, broker: { url: string; token: string }): Record<string, string> {
   const env: Record<string, string> = {};
