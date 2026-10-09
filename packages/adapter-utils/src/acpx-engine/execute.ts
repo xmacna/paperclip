@@ -1,5 +1,6 @@
 import { cancellableSandboxStartup } from "./startup-cancellation.js";
 import { withAdapterExecutionPhase, type AdapterExecutionPhase } from "../execution-phase.js";
+import { GITHUB_LAUNCHER_CAPABILITY_ENV_KEYS } from "../github-launcher.js";
 import fs from "node:fs/promises";
 import fsSync from "node:fs";
 import os from "node:os";
@@ -2058,8 +2059,10 @@ async function buildRuntime(input: {
         "PATH", "HOME", "LANG", "TMPDIR", "CODEX_HOME",
         "PAPERCLIP_AGENT_KEY_ID", "PAPERCLIP_AGENT_PUBLIC_KEY", "PAPERCLIP_AGENT_PRIVATE_KEY",
         // Preserve Codex's default secret-name exclusions. The short-lived
-        // Paperclip API token is required by the agent skill's Bash/curl calls.
-        ...Object.keys(env).filter(key => key === "PAPERCLIP_API_KEY" || !/key|secret|token/i.test(key)),
+        // Paperclip API token is required by the agent skill's Bash/curl calls,
+        // and the managed git/gh launcher needs its run-scoped capability.
+        ...Object.keys(env).filter(key => key === "PAPERCLIP_API_KEY"
+          || GITHUB_LAUNCHER_CAPABILITY_ENV_KEYS.includes(key) || !/key|secret|token/i.test(key)),
       ])] } : {}),
       requestedModel,
       requestedThinkingEffort,
