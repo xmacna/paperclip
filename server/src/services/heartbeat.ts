@@ -16162,6 +16162,8 @@ export function heartbeatService(
           const cancelled = await setRunStatusIfRunning(run.id, "cancelled", {
             finishedAt: new Date(), errorCode: "legacy_disposition_repair_suppressed",
             error: `Disposition repair suppressed: ${repairBlock}`,
+            // Positive evidence that the adapter never received this run.
+            resultJson: { executionRecovery: { kind: "disposition_repair_suppressed", providerWorkStarted: false } },
           });
           if (cancelled.updated) {
             await setWakeupStatus(run.wakeupRequestId, "skipped", { finishedAt: new Date(), error: repairBlock });

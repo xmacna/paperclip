@@ -35,6 +35,20 @@ it("permits subscription waits only with explicit evidence that provider work ne
   } })).toBe(true);
 });
 
+it("does not hold a disposition repair suppressed before dispatch", () => {
+  const suppressed = {
+    runtimeMode: "legacy", status: "cancelled", errorCode: "legacy_disposition_repair_suppressed",
+    resultJson: { executionRecovery: { kind: "disposition_repair_suppressed", providerWorkStarted: false } },
+  };
+  expect(legacyExecutionNeedsReconciliation(suppressed)).toBe(false);
+  expect(legacyExecutionNeedsReconciliation({ ...suppressed, resultJson: {} })).toBe(true);
+  expect(legacyExecutionNeedsReconciliation({ ...suppressed, status: "failed" })).toBe(true);
+  expect(legacyExecutionNeedsReconciliation({ ...suppressed, errorCode: "cancelled" })).toBe(true);
+  expect(legacyExecutionNeedsReconciliation({ ...suppressed, resultJson: {
+    executionRecovery: { kind: "disposition_repair_suppressed", providerWorkStarted: true },
+  } })).toBe(true);
+});
+
 it("allows a confirmed interrupted checkpoint without treating ordinary cancellation as replay permission", () => {
   expect(legacyExecutionNeedsReconciliation(stopped)).toBe(false);
   expect(legacyExecutionNeedsReconciliation({ ...stopped, resultJson: {} })).toBe(true);
