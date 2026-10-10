@@ -45,6 +45,11 @@ export function legacyExecutionNeedsReconciliation(
       evidence?.kind === "ai_connection_wait" && evidence.providerWorkStarted === false) return false;
   if (run.status === "cancelled" && run.errorCode === "workspace_busy" &&
       evidence?.kind === "workspace_wait" && evidence.providerWorkStarted === false) return false;
+  // A suppressed disposition repair is cancelled before the adapter dispatch,
+  // so no provider action exists to reconcile. Holding it defers every later
+  // comment wake on the task with "process_identity_missing".
+  if (run.status === "cancelled" && run.errorCode === "legacy_disposition_repair_suppressed" &&
+      evidence?.kind === "disposition_repair_suppressed" && evidence.providerWorkStarted === false) return false;
   // Setup owns the bounded retry budget for temporary workspace scans. Its
   // exhaustion needs workspace repair, not reconciliation of provider actions
   // that the bootstrap evidence proves never started. Keep unknown outcomes held.
