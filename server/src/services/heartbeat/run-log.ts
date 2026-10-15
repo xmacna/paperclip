@@ -13,10 +13,26 @@ export function appendExcerpt(prev: string, chunk: string) {
   return appendWithByteCap(prev, chunk, MAX_EXCERPT_BYTES);
 }
 
+/**
+ * Postgres jsonb rejects a lone UTF-16 surrogate (`\ud835`), which a plain
+ * `slice` produces when it cuts through a pair (e.g. mathematical bold
+ * letters). Replace unpaired surrogates with U+FFFD before text reaches jsonb.
+ */
+export function toWellFormedText(value: string) {
+  return value.toWellFormed();
+}
+
+/** `slice(0, max)` that never leaves half of a surrogate pair at the cut. */
+export function sliceWellFormed(value: string, max: number) {
+  return toWellFormedText(value.slice(0, max));
+}
+
 function truncateRunEventString(value: string) {
-  if (value.length <= MAX_RUN_EVENT_PAYLOAD_STRING_CHARS) return value;
+  if (value.length <= MAX_RUN_EVENT_PAYLOAD_STRING_CHARS) {
+    return toWellFormedText(value);
+  }
   const omittedChars = value.length - MAX_RUN_EVENT_PAYLOAD_STRING_CHARS;
-  return `${value.slice(0, MAX_RUN_EVENT_PAYLOAD_STRING_CHARS)}\n[truncated ${omittedChars} chars]`;
+  return `${sliceWellFormed(value, MAX_RUN_EVENT_PAYLOAD_STRING_CHARS)}\n[truncated ${omittedChars} chars]`;
 }
 
 function boundRunEventValue(
@@ -115,6 +131,6 @@ export function compactRunLogChunk(
   const tailChars = Math.max(0, Math.floor(maxChars * 0.25));
   const omittedChars = Math.max(0, normalized.length - headChars - tailChars);
   const marker = `\n[paperclip truncated run log chunk: omitted ${omittedChars} chars]\n`;
-  return `${normalized.slice(0, headChars)}${marker}${normalized.slice(normalized.length - tailChars)}`;
+  return toWellFormedText(`${normalized.slice(0, headChars)}${marker}${normalized.slice(normalized.length - tailChars)}`);
 }
 

@@ -140,6 +140,7 @@ import {
   appendExcerpt,
   boundHeartbeatRunEventPayloadForStorage,
   compactRunLogChunk,
+  sliceWellFormed,
 } from "./heartbeat/run-log.js";
 export {
   boundHeartbeatRunEventPayloadForStorage,
@@ -789,7 +790,7 @@ export function redactDetectedSuccessfulRunProgressSummaryForBoard(
   const redacted = redactSensitiveText(
     redactCurrentUserText(normalized, currentUserRedactionOptions),
   );
-  return redacted.length <= 280 ? redacted : `${redacted.slice(0, 277)}...`;
+  return redacted.length <= 280 ? redacted : `${sliceWellFormed(redacted, 277)}...`;
 }
 
 export function redactSuccessfulRunHandoffEvidence(
@@ -11425,7 +11426,7 @@ export function heartbeatService(
     if (!reason) return null;
     const trimmed = reason.trim();
     if (!trimmed) return null;
-    return trimmed.length > 500 ? `${trimmed.slice(0, 499)}…` : trimmed;
+    return trimmed.length > 500 ? `${sliceWellFormed(trimmed, 499)}…` : trimmed;
   }
 
   async function finalizeAgentStatus(

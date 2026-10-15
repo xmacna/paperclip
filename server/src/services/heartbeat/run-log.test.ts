@@ -47,6 +47,22 @@ describe("heartbeat run-log payload formatting", () => {
     });
   });
 
+  it("never cuts a surrogate pair in half when truncating (jsonb rejects a lone surrogate)", () => {
+    // "𝗔" is U+1D5D4: a surrogate pair (\ud835\uddd4); the 16 KiB cut lands between its halves.
+    const text = `${"x".repeat(16 * 1024 - 1)}𝗔${"𝗚".repeat(10)}`;
+    const { text: bounded } = boundHeartbeatRunEventPayloadForStorage({ text }) as { text: string };
+
+    expect(bounded.isWellFormed()).toBe(true);
+    expect(bounded).toContain("[truncated ");
+    expect(() => JSON.stringify({ bounded })).not.toThrow();
+    expect(JSON.stringify({ bounded })).not.toContain("\\ud835");
+  });
+
+  it("repairs a lone surrogate that comes from the source", () => {
+    const { text } = boundHeartbeatRunEventPayloadForStorage({ text: "ab\ud835cd" }) as { text: string };
+    expect(text).toBe("ab\ufffdcd");
+  });
+
   it("keeps strings at the limit and reports the exact number of omitted characters", () => {
     const limit = "x".repeat(16 * 1024);
     expect(boundHeartbeatRunEventPayloadForStorage({
