@@ -3421,7 +3421,7 @@ function describeErrorDiagnostics(err: unknown): {
   return { errorName, acpCode, causeMessage, retryable, stackPreview };
 }
 
-function classifyError(
+export function classifyError(
   err: unknown,
   phase?: AcpxExecutionPhase,
 ): Pick<AdapterExecutionResult, "errorCode" | "errorMeta"> {
@@ -3454,7 +3454,12 @@ function classifyError(
     };
   }
   const lower = message.toLowerCase();
-  const authLike = lower.includes("auth") || lower.includes("login") || lower.includes("credential");
+  // A database failure echoes the whole SQL statement and its bound values, so
+  // keyword matching on the message would label it as an auth problem.
+  const isDatabaseFailure = message.startsWith("Failed query:");
+  const authLike =
+    !isDatabaseFailure &&
+    (lower.includes("auth") || lower.includes("login") || lower.includes("credential"));
   if (authLike) {
     return {
       errorCode: "acpx_auth_required",
