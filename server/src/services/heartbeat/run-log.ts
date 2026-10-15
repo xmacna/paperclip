@@ -6,6 +6,8 @@ const MAX_RUN_EVENT_PAYLOAD_STRING_CHARS = 16 * 1024;
 const MAX_RUN_EVENT_PAYLOAD_ARRAY_ITEMS = 50;
 const MAX_RUN_EVENT_PAYLOAD_OBJECT_KEYS = 100;
 const MAX_RUN_EVENT_PAYLOAD_DEPTH = 6;
+const LONE_SURROGATE_RE =
+  /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g;
 const INLINE_BASE64_IMAGE_DATA_RE =
   /("type":"image","source":\{"type":"base64","data":")([A-Za-z0-9+/=]{1024,})(")/g;
 
@@ -19,7 +21,7 @@ export function appendExcerpt(prev: string, chunk: string) {
  * letters). Replace unpaired surrogates with U+FFFD before text reaches jsonb.
  */
 export function toWellFormedText(value: string) {
-  return value.toWellFormed();
+  return value.replace(LONE_SURROGATE_RE, "\ufffd");
 }
 
 /** `slice(0, max)` that never leaves half of a surrogate pair at the cut. */

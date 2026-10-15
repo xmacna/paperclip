@@ -52,7 +52,8 @@ describe("heartbeat run-log payload formatting", () => {
     const text = `${"x".repeat(16 * 1024 - 1)}𝗔${"𝗚".repeat(10)}`;
     const { text: bounded } = boundHeartbeatRunEventPayloadForStorage({ text }) as { text: string };
 
-    expect(bounded.isWellFormed()).toBe(true);
+    expect(bounded).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/);
+    expect(bounded).toContain("\ufffd");
     expect(bounded).toContain("[truncated ");
     expect(() => JSON.stringify({ bounded })).not.toThrow();
     expect(JSON.stringify({ bounded })).not.toContain("\\ud835");
