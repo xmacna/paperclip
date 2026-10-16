@@ -8,6 +8,7 @@ import type { Db } from "@paperclipai/db";
 import {
   agents,
   toolConnectionInstalls,
+  toolProfileBindings,
   agentConfigRevisions,
   agentApiKeys,
   agentRuntimeState,
@@ -1136,6 +1137,18 @@ export function agentService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
           eq(principalPermissionGrants.companyId, existing.companyId),
           eq(principalPermissionGrants.principalType, "agent"),
           eq(principalPermissionGrants.principalId, id),
+        ));
+        // Install and profile-binding targets are polymorphic text ids with no FK,
+        // so deleting the agent would otherwise leave rows nothing can remove.
+        await tx.delete(toolConnectionInstalls).where(and(
+          eq(toolConnectionInstalls.companyId, existing.companyId),
+          eq(toolConnectionInstalls.targetType, "agent"),
+          eq(toolConnectionInstalls.targetId, id),
+        ));
+        await tx.delete(toolProfileBindings).where(and(
+          eq(toolProfileBindings.companyId, existing.companyId),
+          eq(toolProfileBindings.targetType, "agent"),
+          eq(toolProfileBindings.targetId, id),
         ));
         const deleted = await tx
           .delete(agents)

@@ -1929,7 +1929,12 @@ function connectorEnrollmentPrincipal(req: Request): string {
             .from(agents)
             .where(and(eq(agents.id, agentId), eq(agents.companyId, connection.companyId)))
             .limit(1);
-          if (!agent) throw forbidden("The target agent is not available in this company");
+          if (!agent) {
+            // An install left behind by a deleted agent can still be removed;
+            // adding one for an agent outside this company stays forbidden.
+            if (existingKeys.has(`agent:${agentId}`) && !requestedKeys.has(`agent:${agentId}`)) continue;
+            throw forbidden("The target agent is not available in this company");
+          }
           const decision = await access.decide({
             actor: req.actor,
             action: "agent_config:update",

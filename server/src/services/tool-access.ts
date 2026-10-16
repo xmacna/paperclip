@@ -18775,6 +18775,40 @@ export function toolAccessService(
           install,
         ]),
       );
+      // An install row whose agent no longer exists can only be removed. Clients
+      // send back the full list they read, orphan included, so drop it from the
+      // request (the diff below deletes it) instead of rejecting the whole write.
+      const existingAgentInstalls = await db
+        .select({ targetId: toolConnectionInstalls.targetId })
+        .from(toolConnectionInstalls)
+        .where(
+          and(
+            eq(toolConnectionInstalls.companyId, connection.companyId),
+            eq(toolConnectionInstalls.connectionId, connection.id),
+            eq(toolConnectionInstalls.targetType, "agent"),
+          ),
+        );
+      const keptAgentIds = existingAgentInstalls
+        .map((row) => row.targetId)
+        .filter((targetId) => requested.has(`agent:${targetId}`));
+      if (keptAgentIds.length > 0) {
+        const liveAgents = await db
+          .select({ id: agents.id })
+          .from(agents)
+          .where(
+            and(
+              eq(agents.companyId, connection.companyId),
+              sql`${agents.id}::text in (${sql.join(
+                keptAgentIds.map((id) => sql`${id}`),
+                sql`, `,
+              )})`,
+            ),
+          );
+        const live = new Set(liveAgents.map((row) => row.id));
+        for (const targetId of keptAgentIds) {
+          if (!live.has(targetId)) requested.delete(`agent:${targetId}`);
+        }
+      }
       for (const install of requested.values()) {
         if (install.targetType === "company") {
           if (install.targetId !== connection.companyId)
