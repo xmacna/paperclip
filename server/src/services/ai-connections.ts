@@ -1,5 +1,6 @@
 import { WORKSPACE_RESTORE_LOCK_TIMEOUT_CODE } from "@paperclipai/adapter-utils/workspace-restore-merge";
 import { withAccountHomeSecretMutationLock } from "@paperclipai/adapter-codex-local/server";
+import { readClaudeToken } from "@paperclipai/adapter-claude-local/server";
 import { syncConnectionCredentialBindings } from "./connection-credential-bindings.js";
 import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
@@ -966,6 +967,7 @@ export function aiConnectionService(db: Db) {
   }) {
     return withAccountHomeSecretMutationLock(undefined, input.companyId, async () => {
       let recovered = false;
+      let adoptedLiveToken = false;
       await db.transaction(async (tx) => {
         const { attribution } = input;
         const [grant] = await tx.select().from(connectionGrants).where(and(
@@ -994,6 +996,19 @@ export function aiConnectionService(db: Db) {
         // database commit. Save its working replacement instead of revoking it.
         recovered = await recoverQuotaCredentialInTransaction(tx as unknown as Db, { connection, grant }, value) !== null;
         if (recovered) return;
+        // xmacna: an operator-login Claude token rotates (~8h) and the provider
+        // revokes the previous one, so a run that spans the rotation fails while
+        // the operator's login is fine. Adopt the live token instead of revoking.
+        if (connection.config.aiOperatorLogin === true && metadata.data.provider === "anthropic") {
+          const configDir = process.env.PAPERCLIP_OPERATOR_CLAUDE_CONFIG_DIR?.trim() || undefined;
+          const live = await readClaudeToken({ allowKeychain: true, configDir }).catch(() => null);
+          if (live && live !== value) {
+            await secretService(tx).rotate(ref.secretId, { value: live }, { userId: grant.subjectUserId });
+            await tx.update(connectionGrants).set({ updatedAt: new Date() }).where(eq(connectionGrants.id, grant.id));
+            adoptedLiveToken = true;
+            return;
+          }
+        }
         await tx.update(connectionGrants).set({ status: "needs_reauthorization", updatedAt: new Date() })
           .where(eq(connectionGrants.id, grant.id));
         await tx.update(toolConnections).set({ healthStatus: "error", healthMessage: "Sign in again to restore this AI connection.", updatedAt: new Date() })
@@ -1007,6 +1022,7 @@ export function aiConnectionService(db: Db) {
       });
       if (recovered) await quotaCredentialRecovery(input.companyId, input.attribution.grantId).clear()
         .catch(error => logger.warn({ err: error, grantId: input.attribution.grantId }, "Saved failed-run credential recovery cleanup pending"));
+      return { adoptedLiveToken };
     });
   }
   /** Refresh only the selected vaulted identity, serializing rotation and reconnect. */

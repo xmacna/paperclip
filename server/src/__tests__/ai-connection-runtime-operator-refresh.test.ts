@@ -3,7 +3,8 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { agents, companies, companyMemberships, createDb } from "@paperclipai/db";
+import { eq } from "drizzle-orm";
+import { agents, companies, companyMemberships, connectionGrants, createDb } from "@paperclipai/db";
 import { startEmbeddedPostgresTestDatabase } from "./helpers/embedded-postgres.js";
 import { aiConnectionService } from "../services/ai-connections.js";
 import { prepareManagedAiRuntime } from "../services/ai-connection-runtime.js";
@@ -131,5 +132,35 @@ describe("operator-login Claude subscriptions follow the live token", () => {
       await runtime.cleanup();
     }
     expect(await aiConnectionService(db).credential(await f.select())).toBe("stored-token");
+  });
+
+  it("adopts the rotated live token instead of revoking when a run fails with the old one", async () => {
+    const f = await fixture(true);
+    await writeLiveCredential("token-a", Date.now() + 60 * 60 * 1000);
+    const runtime = await f.runtime();
+    await runtime.cleanup();
+    const runStartedAt = new Date();
+    await writeLiveCredential("token-b", Date.now() + 60 * 60 * 1000);
+    const service = aiConnectionService(db);
+    const result = await service.markAuthenticationFailed({ companyId: f.companyId, agentId: f.agentId, runStartedAt,
+      attribution: { ...runtime.attribution, identity: runtime.identity } });
+    expect(result).toEqual({ adoptedLiveToken: true });
+    const selection = await f.select();
+    const [grant] = await db.select().from(connectionGrants).where(eq(connectionGrants.id, selection.grant.id));
+    expect(grant.status).toBe("active");
+    expect(await service.credential(selection)).toBe("token-b");
+  });
+
+  it("still revokes when the live token is the one that failed", async () => {
+    const f = await fixture(true);
+    await writeLiveCredential("token-c", Date.now() + 60 * 60 * 1000);
+    const runtime = await f.runtime();
+    await runtime.cleanup();
+    const selection = await f.select();
+    const result = await aiConnectionService(db).markAuthenticationFailed({ companyId: f.companyId, agentId: f.agentId, runStartedAt: new Date(),
+      attribution: { ...runtime.attribution, identity: runtime.identity } });
+    expect(result).toEqual({ adoptedLiveToken: false });
+    const [grant] = await db.select().from(connectionGrants).where(eq(connectionGrants.id, selection.grant.id));
+    expect(grant.status).toBe("needs_reauthorization");
   });
 });
