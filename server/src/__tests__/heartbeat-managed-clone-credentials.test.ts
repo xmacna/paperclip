@@ -74,6 +74,57 @@ exit 128
     }
   });
 
+  it("clones remote repositories as partial clones and local sources in full", async () => {
+    const bin = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-fake-args-"));
+    const argsLog = path.join(bin, "args.log");
+    const previousPath = process.env.PATH;
+    await fs.writeFile(path.join(bin, "git"), `#!/bin/sh
+printf '%s\\n' "$*" >> "${argsLog}"
+for argument in "$@"; do destination="$argument"; done
+/bin/mkdir -p "$destination/.git"
+`, { mode: 0o755 });
+    try {
+      process.env.PATH = bin;
+      await ensureManagedProjectWorkspace({
+        companyId: "partial-clone-fixture", projectId: "remote", repoUrl: "https://example.test/team/repo.git",
+      });
+      expect((await fs.readFile(argsLog, "utf8")).split("\n")[0]).toContain("clone --no-hardlinks --filter=blob:none --");
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath;
+      await fs.rm(bin, { recursive: true, force: true });
+    }
+  });
+
+  it("reports a clone timeout as a timeout, honoring the configured limit", async () => {
+    const bin = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-fake-slow-clone-"));
+    const previousPath = process.env.PATH;
+    const previousTimeout = process.env.PAPERCLIP_MANAGED_WORKSPACE_GIT_CLONE_TIMEOUT_MS;
+    await fs.writeFile(path.join(bin, "git"), `#!/bin/sh
+echo "Cloning into 'x'..." >&2
+exec /bin/sleep 30
+`, { mode: 0o755 });
+    try {
+      process.env.PATH = bin;
+      process.env.PAPERCLIP_MANAGED_WORKSPACE_GIT_CLONE_TIMEOUT_MS = "300";
+      const failure = await ensureManagedProjectWorkspace({
+        companyId: "clone-timeout-fixture", projectId: "slow", repoUrl: "https://example.test/team/big.git",
+      }).catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(Error);
+      expect((failure as Error).message).toContain("git clone timed out after 0s");
+      expect((failure as Error).message).toContain("PAPERCLIP_MANAGED_WORKSPACE_GIT_CLONE_TIMEOUT_MS");
+      expect(readGitConnectionFailure(failure)).toBeNull();
+      const entries = await fs.readdir(path.dirname(resolveManagedProjectWorkspaceDir({
+        companyId: "clone-timeout-fixture", projectId: "slow", repoName: "big",
+      })));
+      expect(entries.some((name) => name.includes(".clone-"))).toBe(false);
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath;
+      if (previousTimeout === undefined) delete process.env.PAPERCLIP_MANAGED_WORKSPACE_GIT_CLONE_TIMEOUT_MS;
+      else process.env.PAPERCLIP_MANAGED_WORKSPACE_GIT_CLONE_TIMEOUT_MS = previousTimeout;
+      await fs.rm(bin, { recursive: true, force: true });
+    }
+  });
+
   it("does not classify a credential-provider exception that resembles a Git failure", async () => {
     const failure = Object.assign(new Error("fatal: Authentication failed for 'https://example.test/repo.git'"), {
       code: 128, stderr: "fatal: Authentication failed for 'https://example.test/repo.git'",
