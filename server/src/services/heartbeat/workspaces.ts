@@ -97,7 +97,27 @@ const execFile = promisify(execFileCallback);
 
 const REPO_ONLY_CWD_SENTINEL = "/__paperclip_repo_only__";
 
-const MANAGED_WORKSPACE_GIT_CLONE_TIMEOUT_MS = 10 * 60 * 1000;
+const DEFAULT_MANAGED_WORKSPACE_GIT_CLONE_TIMEOUT_MS = 10 * 60 * 1000;
+export const MANAGED_WORKSPACE_GIT_CLONE_TIMEOUT_ENV = "PAPERCLIP_MANAGED_WORKSPACE_GIT_CLONE_TIMEOUT_MS";
+
+/** Clone/checkout time limit; large repositories can raise it through the server environment. */
+function resolveManagedWorkspaceGitCloneTimeoutMs(): number {
+  const raw = Number(process.env[MANAGED_WORKSPACE_GIT_CLONE_TIMEOUT_ENV]);
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : DEFAULT_MANAGED_WORKSPACE_GIT_CLONE_TIMEOUT_MS;
+}
+
+/** execFile reports a timeout as a killed child with only the command line in its message. */
+function describeGitTimeout(step: string, error: unknown, timeoutMs: number): Error | null {
+  const failure = error as { killed?: unknown; signal?: unknown } | null;
+  if (!failure || failure.killed !== true || failure.signal == null) return null;
+  return Object.assign(
+    new Error(
+      `${step} timed out after ${Math.round(timeoutMs / 1000)}s. ` +
+        `Raise ${MANAGED_WORKSPACE_GIT_CLONE_TIMEOUT_ENV} (milliseconds) for large repositories.`,
+    ),
+    { code: "git_clone_timeout" },
+  );
+}
 
 export const WORKSPACE_VALIDATION_FAILURE_CODE = "workspace_validation_failed";
 
@@ -550,11 +570,22 @@ async function materializeManagedProjectWorkspace(
     ? await input.resolveGitAuth(input.repoUrl)
     : null;
   const cloneTmpDir = await fs.mkdtemp(`${cwd}.clone-`);
+  const cloneTimeoutMs = resolveManagedWorkspaceGitCloneTimeoutMs();
   try {
     try {
+      // Remote clones skip blob history (partial clone) so large repositories do not exhaust the
+      // timeout; blobs for the checked-out ref are fetched on demand. Local clones ignore --filter.
       await execFile(
         "git",
-        [...(auth?.configArgs ?? []), "clone", "--no-hardlinks", "--", input.localSource ?? input.repoUrl, cloneTmpDir],
+        [
+          ...(auth?.configArgs ?? []),
+          "clone",
+          "--no-hardlinks",
+          ...(input.localSource ? [] : ["--filter=blob:none"]),
+          "--",
+          input.localSource ?? input.repoUrl,
+          cloneTmpDir,
+        ],
         {
           env: {
             // Spread order matters: the sanitizer strips PAPERCLIP_*, which would remove the
@@ -565,10 +596,12 @@ async function materializeManagedProjectWorkspace(
             GIT_TERMINAL_PROMPT: "0",
             ...(auth?.env ?? {}),
           },
-          timeout: MANAGED_WORKSPACE_GIT_CLONE_TIMEOUT_MS,
+          timeout: cloneTimeoutMs,
         },
       );
     } catch (error) {
+      const timeout = describeGitTimeout("git clone", error, cloneTimeoutMs);
+      if (timeout) throw timeout;
       const connectionFailure = !input.localSource ? classifyGitCloneFailure(input.repoUrl, error) : null;
       if (connectionFailure) throw new GitConnectionFailureError(
         error instanceof Error ? error.message : "Git clone failed", connectionFailure,
@@ -588,7 +621,11 @@ async function materializeManagedProjectWorkspace(
       }
       await execFile("git", ["-C", cloneTmpDir, "remote", "set-url", "origin", input.repoUrl], { timeout: 10_000 });
     } else if (input.repoRef) {
-      await execFile("git", ["-C", cloneTmpDir, "checkout", input.repoRef], { timeout: MANAGED_WORKSPACE_GIT_CLONE_TIMEOUT_MS });
+      try {
+        await execFile("git", ["-C", cloneTmpDir, "checkout", input.repoRef], { timeout: cloneTimeoutMs });
+      } catch (error) {
+        throw describeGitTimeout("git checkout", error, cloneTimeoutMs) ?? error;
+      }
     }
   } catch (error) {
     await fs
